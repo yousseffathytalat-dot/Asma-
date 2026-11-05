@@ -42,12 +42,13 @@ jobs:
           ls -la "$ROOT"
           echo "root=$ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Pin Moonshine Android library to a published version
+      - name: Pin Moonshine version and minSdk 26
         shell: bash
         working-directory: ${{ steps.loc.outputs.root }}
         run: |
           sed -i -E 's/(ai\.moonshine:moonshine-voice:)[0-9][0-9.]*/\10.1.5/' app/build.gradle.kts
-          grep -n "moonshine" app/build.gradle.kts
+          sed -i -E 's/minSdk = [0-9]+/minSdk = 26/' app/build.gradle.kts
+          grep -nE "moonshine|minSdk" app/build.gradle.kts
 
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
