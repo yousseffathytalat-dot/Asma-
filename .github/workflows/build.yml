@@ -48,8 +48,28 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
+      - name: Install Gradle 8.7 (retry + GitHub mirror)
+        shell: bash
+        run: |
+          set -euo pipefail
+          V=8.7
+          cd "$RUNNER_TEMP"
+          ok=0
+          for url in \
+            "https://github.com/gradle/gradle-distributions/releases/download/v${V}.0/gradle-${V}-bin.zip" \
+            "https://services.gradle.org/distributions/gradle-${V}-bin.zip"; do
+            for i in 1 2 3 4; do
+              if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 -o gradle.zip "$url" && unzip -tq gradle.zip > /dev/null 2>&1; then
+                ok=1; break 2
+              fi
+              echo "Download failed (try $i) from $url"; sleep $((i * 5))
+            done
+          done
+          [ "$ok" = 1 ] || { echo "::error::Could not download Gradle $V"; exit 1; }
+          unzip -q gradle.zip
+          echo "$RUNNER_TEMP/gradle-${V}/bin" >> "$GITHUB_PATH"
+
       - uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: "8.7" }
 
       - name: Android SDK licenses + platform
         shell: bash
@@ -81,7 +101,13 @@ jobs:
       - name: Build debug APK
         shell: bash
         working-directory: ${{ steps.loc.outputs.root }}
-        run: gradle assembleDebug --stacktrace
+        run: |
+          gradle --version
+          for i in 1 2 3; do
+            if gradle assembleDebug --stacktrace; then exit 0; fi
+            echo "Build failed (try $i), retrying in 20s..."; sleep 20
+          done
+          exit 1
 
       - uses: actions/upload-artifact@v4
         with:
