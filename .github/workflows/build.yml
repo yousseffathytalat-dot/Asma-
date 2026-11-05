@@ -132,6 +132,21 @@ jobs:
             echo "::warning::encoder_model.ort مش موجود في الموديل المنزّل — أسماء الملفات الفعلية فوق في ---- bundled model ----"
           fi
 
+      - name: Diagnostics (info only)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e +o pipefail
+          echo "---- pip versions ----"
+          pip index versions moonshine-voice 2>&1 | head -3
+          echo "---- maven versions ----"
+          curl -fsS https://repo1.maven.org/maven2/ai/moonshine/moonshine-voice/maven-metadata.xml 2>&1 | grep -o '<version>[^<]*</version>' | tail -15
+          echo "---- python module ----"
+          D=$(python -c "import moonshine_voice,os;print(os.path.dirname(moonshine_voice.__file__))" 2>/dev/null)
+          echo "$D"; ls "$D" 2>/dev/null | head -30
+          grep -rnE "STREAMING|base-ar|MODEL_ARCH" "$D" --include=*.py 2>/dev/null | head -40
+          exit 0
+
       - name: Build debug APK
         shell: bash
         working-directory: ${{ steps.loc.outputs.root }}
@@ -139,7 +154,7 @@ jobs:
           gradle --version
           for i in 1 2 3; do
             if gradle assembleDebug --stacktrace; then exit 0; fi
-            echo "Build failed (try $i), retrying in 20s...  "; sleep 20
+            echo "Build failed (try $i), retrying in 20s..."; sleep 20
           done
           exit 1
 
