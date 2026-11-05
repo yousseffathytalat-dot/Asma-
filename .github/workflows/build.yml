@@ -1,0 +1,89 @@
+name: Build APK
+
+# يشتغل لوحده مع كل رفع، أو يدوي من تبويب Actions -> Run workflow.
+# بيدعم الحالتين:
+#   1) المشروع مرفوع كملفات عادية (settings.gradle.kts في أول الـ repo)
+#   2) المشروع مرفوع وهو ZIP (أي ملف .zip) -> بيتفك أثناء البناء ويتبني.
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate project (unzip if zipped)
+        id: loc
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            ROOT="$PWD"
+            echo "Project found as plain files."
+          else
+            ZIP=$(find . -maxdepth 3 -iname '*.zip' -not -path './.git/*' | head -n 1)
+            if [ -z "$ZIP" ]; then
+              echo "::error::No Gradle project and no .zip file found in the repo."
+              exit 1
+            fi
+            echo "Unzipping: $ZIP"
+            mkdir -p "$RUNNER_TEMP/proj"
+            unzip -q -o "$ZIP" -d "$RUNNER_TEMP/proj"
+            SETTINGS=$(find "$RUNNER_TEMP/proj" -name 'settings.gradle*' -not -path '*/__MACOSX/*' | head -n 1)
+            if [ -z "$SETTINGS" ]; then
+              echo "::error::Zip does not contain settings.gradle(.kts)."
+              exit 1
+            fi
+            ROOT=$(cd "$(dirname "$SETTINGS")" && pwd)
+          fi
+          echo "Project root: $ROOT"
+          ls -la "$ROOT"
+          echo "root=$ROOT" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.7" }
+
+      - name: Android SDK licenses + platform
+        shell: bash
+        run: |
+          SDKM="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKM" ]; then
+            set +o pipefail
+            yes | "$SDKM" --licenses > /dev/null || true
+            "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null || true
+          fi
+
+      - name: Download Moonshine Arabic model
+        shell: bash
+        working-directory: ${{ steps.loc.outputs.root }}
+        run: |
+          if [ -d app/src/main/assets/base-ar ] && [ -n "$(ls -A app/src/main/assets/base-ar 2>/dev/null)" ]; then
+            echo "Model already bundled, skipping download."
+            exit 0
+          fi
+          pip install moonshine-voice
+          export MOONSHINE_VOICE_CACHE="$PWD/model-cache"
+          python -m moonshine_voice.download --language ar
+          find model-cache -type f | head -50
+          DIR=$(find model-cache -type f \( -name '*.ort' -o -name '*.onnx' \) -printf '%h\n' | sort -u | head -1)
+          echo "Model dir: $DIR"
+          mkdir -p app/src/main/assets/base-ar
+          cp -r "$DIR"/. app/src/main/assets/base-ar/
+
+      - name: Build debug APK
+        shell: bash
+        working-directory: ${{ steps.loc.outputs.root }}
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MoonshineSTT-apk
+          path: ${{ steps.loc.outputs.root }}/app/build/outputs/apk/debug/*.apk
