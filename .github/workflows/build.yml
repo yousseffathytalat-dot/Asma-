@@ -99,11 +99,11 @@ jobs:
           fi
           # نفس إصدار مكتبة التطبيق عشان أسماء ملفات الموديل تتطابق (لو مش موجود ياخد الأحدث)
           pip install "moonshine-voice==0.1.5" || pip install moonshine-voice
-          pip show moonshine-voice | head -3
+          pip show moonshine-voice || true
           ROOTDIR="$PWD/model-cache"
           python -m moonshine_voice.download --language ar --stt --root "$ROOTDIR"
           echo "---- downloaded files ----"
-          find "$ROOTDIR" -type f | head -80
+          find "$ROOTDIR" -type f | head -80 || true
           # الأفضل: الفولدر اللي فيه encoder_model.ort بالظبط (الاسم اللي التطبيق بيدوّر عليه)
           DIR=$(find "$ROOTDIR" -type f -name 'encoder_model.ort' -printf '%h\n' | sort -u | head -1 || true)
           if [ -z "$DIR" ]; then
