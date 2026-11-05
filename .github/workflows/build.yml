@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
       - name: Locate project (unzip if zipped)
         id: loc
@@ -23,7 +24,9 @@ jobs:
             ROOT="$PWD"
             echo "Project found as plain files."
           else
-            ZIP=$(find . -maxdepth 3 -iname '*.zip' -not -path './.git/*' | head -n 1)
+            echo "ZIP files in repo:"; find . -maxdepth 3 -iname '*.zip' -not -path './.git/*'
+            # لو فيه أكتر من ZIP: ياخد الأحدث (آخر رفع)
+            ZIP=$(find . -maxdepth 3 -iname '*.zip' -not -path './.git/*' | while IFS= read -r z; do echo "$(git log -1 --format=%ct -- "$z" 2>/dev/null || echo 0) $z"; done | sort -rn | awk 'NR==1{sub(/^[0-9]+ /,""); print}')
             if [ -z "$ZIP" ]; then
               echo "::error::No Gradle project and no .zip file found in the repo."
               exit 1
@@ -136,7 +139,7 @@ jobs:
           gradle --version
           for i in 1 2 3; do
             if gradle assembleDebug --stacktrace; then exit 0; fi
-            echo "Build failed (try $i), retrying in 20s..."; sleep 20
+            echo "Build failed (try $i), retrying in 20s...  "; sleep 20
           done
           exit 1
 
