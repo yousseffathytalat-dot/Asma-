@@ -45,19 +45,15 @@ jobs:
           ls -la "$ROOT"
           echo "root=$ROOT" >> "$GITHUB_OUTPUT"
 
-      - name: Pin Moonshine version and minSdk 26
+      - name: Pin minSdk 26
         shell: bash
         working-directory: ${{ steps.loc.outputs.root }}
         run: |
-          sed -i -E 's/(ai\.moonshine:moonshine-voice:)[0-9][0-9.]*/\10.1.5/' app/build.gradle.kts
           sed -i -E 's/minSdk = [0-9]+/minSdk = 26/' app/build.gradle.kts
-          grep -nE "moonshine|minSdk" app/build.gradle.kts
+          grep -nE "minSdk|versionName" app/build.gradle.kts
 
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
-
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
 
       - name: Install Gradle 8.7 (retry + GitHub mirror)
         shell: bash
@@ -92,60 +88,34 @@ jobs:
             "$SDKM" "platforms;android-34" "build-tools;34.0.0" > /dev/null || true
           fi
 
-      - name: Download Moonshine Arabic model
+      - name: Download sherpa-onnx native libs (v2.0.1)
         shell: bash
         working-directory: ${{ steps.loc.outputs.root }}
         run: |
-          if [ -d app/src/main/assets/base-ar ] && [ -n "$(ls -A app/src/main/assets/base-ar 2>/dev/null)" ]; then
-            echo "Model already bundled, skipping download."
-            exit 0
+          set -euo pipefail
+          V=v2.0.1
+          URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/${V}/sherpa-onnx-${V}-android.tar.bz2"
+          ok=0
+          for i in 1 2 3 4; do
+            if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 -o "$RUNNER_TEMP/sherpa.tar.bz2" "$URL" && tar tjf "$RUNNER_TEMP/sherpa.tar.bz2" > /dev/null 2>&1; then ok=1; break; fi
+            echo "Download failed (try $i)"; sleep $((i * 5))
+          done
+          [ "$ok" = 1 ] || { echo "::error::Could not download sherpa-onnx libs"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/sherpa"
+          tar xjf "$RUNNER_TEMP/sherpa.tar.bz2" -C "$RUNNER_TEMP/sherpa"
+          for abi in arm64-v8a armeabi-v7a; do
+            mkdir -p "app/src/main/jniLibs/$abi"
+            cp -v "$RUNNER_TEMP/sherpa/jniLibs/$abi/libsherpa-onnx-jni.so" "$RUNNER_TEMP/sherpa/jniLibs/$abi/libonnxruntime.so" "app/src/main/jniLibs/$abi/"
+          done
+          # لو ملفات الـ Kotlin الخاصة بالمكتبة مش موجودة في المشروع، نجيبها من نفس الإصدار
+          if [ ! -f app/src/main/java/com/k2fsa/sherpa/onnx/OfflineRecognizer.kt ]; then
+            git clone -q --depth 1 --branch "$V" https://github.com/k2-fsa/sherpa-onnx.git "$RUNNER_TEMP/sherpa-src"
+            mkdir -p app/src/main/java/com/k2fsa/sherpa/onnx
+            for f in OfflineRecognizer OfflineStream FeatureConfig HomophoneReplacerConfig QnnConfig; do
+              cp "$RUNNER_TEMP/sherpa-src/sherpa-onnx/kotlin-api/$f.kt" app/src/main/java/com/k2fsa/sherpa/onnx/
+            done
           fi
-          # نفس إصدار مكتبة التطبيق عشان أسماء ملفات الموديل تتطابق (لو مش موجود ياخد الأحدث)
-          pip install "moonshine-voice==0.1.5" || pip install moonshine-voice
-          pip show moonshine-voice || true
-          ROOTDIR="$PWD/model-cache"
-          python -m moonshine_voice.download --language ar --stt --root "$ROOTDIR"
-          echo "---- downloaded files ----"
-          find "$ROOTDIR" -type f | head -80 || true
-          # الأفضل: الفولدر اللي فيه encoder_model.ort بالظبط (الاسم اللي التطبيق بيدوّر عليه)
-          DIR=$(find "$ROOTDIR" -type f -name 'encoder_model.ort' -printf '%h\n' | sort -u | head -1 || true)
-          if [ -z "$DIR" ]; then
-            DIR=$(find "$ROOTDIR" -type f -name '*.ort' -printf '%h\n' | sort -u | grep -i base | head -1 || true)
-          fi
-          if [ -z "$DIR" ]; then
-            DIR=$(find "$ROOTDIR" -type f \( -name '*.ort' -o -name '*.onnx' \) -printf '%h\n' | sort -u | head -1 || true)
-          fi
-          if [ -z "$DIR" ]; then
-            echo "Not under --root, searching home cache..."
-            DIR=$(find "$HOME" -type f \( -name '*.ort' -o -name '*.onnx' \) -not -path '*/site-packages/*' -printf '%h\n' 2>/dev/null | sort -u | head -1 || true)
-          fi
-          if [ -z "$DIR" ]; then
-            echo "::error::Model files not found after download."
-            exit 1
-          fi
-          echo "Model dir: $DIR"
-          mkdir -p app/src/main/assets/base-ar
-          cp -r "$DIR"/. app/src/main/assets/base-ar/
-          echo "---- bundled model ----"
-          ls -la app/src/main/assets/base-ar
-          if [ ! -f app/src/main/assets/base-ar/encoder_model.ort ]; then
-            echo "::warning::encoder_model.ort مش موجود في الموديل المنزّل — أسماء الملفات الفعلية فوق في ---- bundled model ----"
-          fi
-
-      - name: Diagnostics (info only)
-        shell: bash
-        continue-on-error: true
-        run: |
-          set +e +o pipefail
-          echo "---- pip versions ----"
-          pip index versions moonshine-voice 2>&1 | head -3
-          echo "---- maven versions ----"
-          curl -fsS https://repo1.maven.org/maven2/ai/moonshine/moonshine-voice/maven-metadata.xml 2>&1 | grep -o '<version>[^<]*</version>' | tail -15
-          echo "---- python module ----"
-          D=$(python -c "import moonshine_voice,os;print(os.path.dirname(moonshine_voice.__file__))" 2>/dev/null)
-          echo "$D"; ls "$D" 2>/dev/null | head -30
-          grep -rnE "STREAMING|base-ar|MODEL_ARCH" "$D" --include=*.py 2>/dev/null | head -40
-          exit 0
+          find app/src/main/jniLibs -type f | sort
 
       - name: Build debug APK
         shell: bash
@@ -160,5 +130,5 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MoonshineSTT-apk
+          name: WhisperSTT-apk
           path: ${{ steps.loc.outputs.root }}/app/build/outputs/apk/debug/*.apk
