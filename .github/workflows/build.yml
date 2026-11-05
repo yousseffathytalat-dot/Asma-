@@ -97,12 +97,18 @@ jobs:
             echo "Model already bundled, skipping download."
             exit 0
           fi
-          pip install moonshine-voice
+          # نفس إصدار مكتبة التطبيق عشان أسماء ملفات الموديل تتطابق (لو مش موجود ياخد الأحدث)
+          pip install "moonshine-voice==0.1.5" || pip install moonshine-voice
+          pip show moonshine-voice | head -3
           ROOTDIR="$PWD/model-cache"
           python -m moonshine_voice.download --language ar --stt --root "$ROOTDIR"
           echo "---- downloaded files ----"
           find "$ROOTDIR" -type f | head -80
-          DIR=$(find "$ROOTDIR" -type f -name '*.ort' -printf '%h\n' | sort -u | grep -i base | head -1 || true)
+          # الأفضل: الفولدر اللي فيه encoder_model.ort بالظبط (الاسم اللي التطبيق بيدوّر عليه)
+          DIR=$(find "$ROOTDIR" -type f -name 'encoder_model.ort' -printf '%h\n' | sort -u | head -1 || true)
+          if [ -z "$DIR" ]; then
+            DIR=$(find "$ROOTDIR" -type f -name '*.ort' -printf '%h\n' | sort -u | grep -i base | head -1 || true)
+          fi
           if [ -z "$DIR" ]; then
             DIR=$(find "$ROOTDIR" -type f \( -name '*.ort' -o -name '*.onnx' \) -printf '%h\n' | sort -u | head -1 || true)
           fi
@@ -119,6 +125,9 @@ jobs:
           cp -r "$DIR"/. app/src/main/assets/base-ar/
           echo "---- bundled model ----"
           ls -la app/src/main/assets/base-ar
+          if [ ! -f app/src/main/assets/base-ar/encoder_model.ort ]; then
+            echo "::warning::encoder_model.ort مش موجود في الموديل المنزّل — أسماء الملفات الفعلية فوق في ---- bundled model ----"
+          fi
 
       - name: Build debug APK
         shell: bash
