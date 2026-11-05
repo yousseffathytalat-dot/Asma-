@@ -90,13 +90,27 @@ jobs:
             exit 0
           fi
           pip install moonshine-voice
-          export MOONSHINE_VOICE_CACHE="$PWD/model-cache"
-          python -m moonshine_voice.download --language ar
-          find model-cache -type f | head -50
-          DIR=$(find model-cache -type f \( -name '*.ort' -o -name '*.onnx' \) -printf '%h\n' | sort -u | head -1)
+          ROOTDIR="$PWD/model-cache"
+          python -m moonshine_voice.download --language ar --stt --root "$ROOTDIR"
+          echo "---- downloaded files ----"
+          find "$ROOTDIR" -type f | head -80
+          DIR=$(find "$ROOTDIR" -type f -name '*.ort' -printf '%h\n' | sort -u | grep -i base | head -1 || true)
+          if [ -z "$DIR" ]; then
+            DIR=$(find "$ROOTDIR" -type f \( -name '*.ort' -o -name '*.onnx' \) -printf '%h\n' | sort -u | head -1 || true)
+          fi
+          if [ -z "$DIR" ]; then
+            echo "Not under --root, searching home cache..."
+            DIR=$(find "$HOME" -type f \( -name '*.ort' -o -name '*.onnx' \) -not -path '*/site-packages/*' -printf '%h\n' 2>/dev/null | sort -u | head -1 || true)
+          fi
+          if [ -z "$DIR" ]; then
+            echo "::error::Model files not found after download."
+            exit 1
+          fi
           echo "Model dir: $DIR"
           mkdir -p app/src/main/assets/base-ar
           cp -r "$DIR"/. app/src/main/assets/base-ar/
+          echo "---- bundled model ----"
+          ls -la app/src/main/assets/base-ar
 
       - name: Build debug APK
         shell: bash
